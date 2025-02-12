@@ -11,7 +11,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from bot import commands
+from . import commands  # Use relative import
 
 async def handle_health(request):
     """Simple health check endpoint."""
