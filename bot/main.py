@@ -42,14 +42,16 @@ async def main():
 
     # Conversation for document handling.
     doc_conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Document.ALL, commands.handle_document)],
-        states={
-            commands.CHOICE: [CallbackQueryHandler(commands.rename_choice_callback)],
-            commands.NEW_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, commands.new_name_handler)]
-        },
-        fallbacks=[CommandHandler("cancel", commands.cancel)]
+    per_message=True,
+    entry_points=[MessageHandler(filters.Document.ALL, commands.handle_document)],
+    states={
+        commands.CHOICE: [CallbackQueryHandler(commands.rename_choice_callback)],
+        commands.NEW_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, commands.new_name_handler)]
+    },
+    fallbacks=[CommandHandler("cancel", commands.cancel)]
     )
     telegram_app.add_handler(doc_conv_handler)
+
 
     # IMPORTANT: Initialize and start the Telegram application.
     await telegram_app.initialize()
