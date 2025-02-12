@@ -106,7 +106,6 @@ async def process_document(update: Update, context, new_name=None):
         return
     bot = context.bot
     file_obj = await bot.get_file(document.file_id)
-    # Download file as byte array and load into a BytesIO buffer
     data = await file_obj.download_as_bytearray()
     buffer = BytesIO(data)
     buffer.seek(0)
@@ -118,4 +117,6 @@ async def process_document(update: Update, context, new_name=None):
     user_id = str(update.effective_user.id)
     thumb = thumb_data.get(user_id)
 
-    await update.message.reply_document(document=buffer, filename=filename, thumb=thumb)
+    # Use the appropriate message to reply: from update.message if available; else from update.callback_query.message.
+    msg = update.message if update.message is not None else update.callback_query.message
+    await msg.reply_document(document=buffer, filename=filename, thumb=thumb)
