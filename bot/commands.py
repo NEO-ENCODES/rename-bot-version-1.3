@@ -56,7 +56,7 @@ async def cancel(update: Update, context):
 # Conversation states for document renaming
 CHOICE = 1
 NEW_NAME = 2
-SET_THUMBNAIL = 10  # (for set_thumbnail conversation already defined above)
+SET_THUMBNAIL = 10  # for the set_thumbnail conversation
 
 async def handle_document(update: Update, context):
     """Handle a document sent directly by the user."""
@@ -106,12 +106,14 @@ async def process_document(update: Update, context, new_name=None):
         return
     bot = context.bot
     file_obj = await bot.get_file(document.file_id)
-    buffer = BytesIO()
-    await file_obj.download(out=buffer)
+    # Download file as byte array and load into a BytesIO buffer
+    data = await file_obj.download_as_bytearray()
+    buffer = BytesIO(data)
     buffer.seek(0)
     filename = new_name if new_name else document.file_name
 
     # Get user's thumbnail from persistence
+    from .persistence import load_thumbnail_data
     thumb_data = load_thumbnail_data()
     user_id = str(update.effective_user.id)
     thumb = thumb_data.get(user_id)
