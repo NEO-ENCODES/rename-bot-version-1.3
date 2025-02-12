@@ -105,18 +105,30 @@ async def process_document(update: Update, context, new_name=None):
     if not document:
         return
     bot = context.bot
+    # Download the document
     file_obj = await bot.get_file(document.file_id)
     data = await file_obj.download_as_bytearray()
     buffer = BytesIO(data)
     buffer.seek(0)
     filename = new_name if new_name else document.file_name
 
-    # Get user's thumbnail from persistence
+    # Retrieve user's thumbnail file id from persistence
     from .persistence import load_thumbnail_data
     thumb_data = load_thumbnail_data()
     user_id = str(update.effective_user.id)
-    thumb = thumb_data.get(user_id)
+    thumb_id = thumb_data.get(user_id)
 
-    # Use the appropriate message to reply: from update.message if available; else from update.callback_query.message.
+    thumb_buffer = None
+    if thumb_id:
+        try:
+            thumb_file_obj = await bot.get_file(thumb_id)
+            thumb_bytes = await thumb_file_obj.download_as_bytearray()
+            thumb_buffer = BytesIO(thumb_bytes)
+            thumb_buffer.seek(0)
+        except Exception as e:
+            print("Failed to download thumbnail:", e)
+            thumb_buffer = None
+
+    # Use update.message if available, else use update.callback_query.message
     msg = update.message if update.message is not None else update.callback_query.message
-    await msg.reply_document(document=buffer, filename=filename, thumb=thumb)
+    await msg.reply_document(document=buffer, filename=filename, thumb=thumb_buffer)
