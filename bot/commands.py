@@ -1,134 +1,136 @@
 # bot/commands.py
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler
+import os
+from telethon import Button
 from .persistence import load_thumbnail_data, save_thumbnail_data
 
-# Load thumbnail data at module level
+# Load persistent thumbnail data
 thumbnail_data = load_thumbnail_data()
 
-# Existing command handlers
-async def start(update: Update, context):
-    """Handle the /start command."""
-    await update.message.reply_text(
-        "Welcome!\n"
-        "Use /view_thumbnail to see your current thumbnail.\n"
-        "Use /set_thumbnail to set a new thumbnail."
-    )
+def get_thumb_path(user_id):
+    """Return a file path for storing the user's thumbnail."""
+    if not os.path.exists("thumbs"):
+        os.makedirs("thumbs")
+    return f"thumbs/{user_id}.jpg"
 
-async def view_thumbnail(update: Update, context):
-    """Handle the /view_thumbnail command."""
-    user_id = str(update.effective_user.id)
+# -----------------------------
+# Command Handlers
+# -----------------------------
+
+async def cmd_start(event):
+    await event.reply("Welcome!\nUse /view_thumbnail to see your current thumbnail.\nUse /set_thumbnail to set a new thumbnail.")
+
+async def cmd_view_thumbnail(event):
+    user_id = str(event.sender_id)
     if user_id not in thumbnail_data:
-        await update.message.reply_text("You have no thumbnail")
+        await event.reply("You have no thumbnail")
     else:
-        thumb = thumbnail_data[user_id]
-        await update.message.reply_photo(photo=thumb)
+        thumb_path = thumbnail_data[user_id]
+        if os.path.exists(thumb_path):
+            await event.reply(file=thumb_path)
+        else:
+            await event.reply("Thumbnail file not found.")
 
-async def set_thumbnail_command(update: Update, context):
-    """Initiate thumbnail setting by asking the user to send a photo."""
-    await update.message.reply_text("Please send the picture you want to set as your thumbnail.")
-    return SET_THUMBNAIL
+async def cmd_set_thumbnail(event):
+    # Mark that this user is awaiting a thumbnail
+    if not hasattr(event.client, "_awaiting_thumbnail"):
+        event.client._awaiting_thumbnail = {}
+    event.client._awaiting_thumbnail[str(event.sender_id)] = True
+    await event.reply("Please send me the photo you want to set as your thumbnail.")
 
-async def photo_handler(update: Update, context):
-    """Handle the photo sent by the user and save the highest quality version."""
-    user_id = str(update.effective_user.id)
-    photo_list = update.message.photo
-    if not photo_list:
-        await update.message.reply_text("No photo detected. Please send a valid photo.")
-        return SET_THUMBNAIL
+def check_thumbnail_photo(event):
+    # Only process if the message has a photo and the user is flagged as awaiting a thumbnail
+    if event.message.photo:
+        if hasattr(event.client, "_awaiting_thumbnail"):
+            return str(event.sender_id) in event.client._awaiting_thumbnail
+    return False
 
-    highest_quality_photo = photo_list[-1]
-    file_id = highest_quality_photo.file_id
-    thumbnail_data[user_id] = file_id
+async def handle_thumbnail_photo(event):
+    user_id = str(event.sender_id)
+    thumb_path = get_thumb_path(user_id)
+    # Download the photo (the highest quality version is downloaded by default)
+    await event.message.download_media(file=thumb_path)
+    thumbnail_data[user_id] = thumb_path
     save_thumbnail_data(thumbnail_data)
+    event.client._awaiting_thumbnail.pop(user_id, None)
+    await event.reply("Thumbnail set successfully!")
 
-    await update.message.reply_text("Thumbnail set successfully!")
-    return ConversationHandler.END
+# -----------------------------
+# Document Handling
+# -----------------------------
 
-async def cancel(update: Update, context):
-    """Cancel the current conversation."""
-    await update.message.reply_text("Operation cancelled.")
-    return ConversationHandler.END
-
-# --- New Document Handling Conversation ---
-
-# Conversation states for document renaming
-CHOICE = 1
-NEW_NAME = 2
-SET_THUMBNAIL = 10  # for the set_thumbnail conversation
-
-async def handle_document(update: Update, context):
-    """Handle a document sent directly by the user."""
-    document = update.message.document
-    user_id = str(update.effective_user.id)
+async def handle_document(event):
+    """When a document is sent, check for thumbnail and ask if the user wants to rename it."""
+    user_id = str(event.sender_id)
     if user_id not in thumbnail_data:
-        await update.message.reply_text("Set thumbnail first")
-        return ConversationHandler.END
-
-    # Save the document in user_data for later use
-    context.user_data["document"] = document
-
-    # Ask if user wants to rename the document
-    keyboard = [
-        [InlineKeyboardButton("Yes", callback_data="rename_yes"),
-         InlineKeyboardButton("No", callback_data="rename_no")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Do you want to rename the document?", reply_markup=reply_markup)
-    return CHOICE
-
-async def rename_choice_callback(update: Update, context):
-    """Handle the inline button response for renaming choice."""
-    query = update.callback_query
-    await query.answer()
-    choice = query.data
-    if choice == "rename_yes":
-        await query.edit_message_text("Please send the new file name.")
-        return NEW_NAME
-    elif choice == "rename_no":
-        await query.edit_message_text("Processing your document with original file name.")
-        await process_document(update, context, new_name=None)
-        return ConversationHandler.END
-
-async def new_name_handler(update: Update, context):
-    """Handle the new file name provided by the user."""
-    new_name = update.message.text.strip()
-    await update.message.reply_text(f"Processing your document with new file name: {new_name}")
-    await process_document(update, context, new_name=new_name)
-    return ConversationHandler.END
-
-async def process_document(update: Update, context, new_name=None):
-    """Download the document and re-send it with the desired filename and user's thumbnail."""
-    from io import BytesIO
-    document = context.user_data.get("document")
-    if not document:
+        await event.reply("Set thumbnail first")
         return
-    bot = context.bot
-    # Download the document
-    file_obj = await bot.get_file(document.file_id)
-    data = await file_obj.download_as_bytearray()
-    buffer = BytesIO(data)
-    buffer.seek(0)
-    filename = new_name if new_name else document.file_name
+    # Store document info in client state
+    if not hasattr(event.client, "_doc_state"):
+        event.client._doc_state = {}
+    event.client._doc_state[user_id] = {"document": event.message.document, "message": event.message}
+    buttons = [
+        [Button.inline("Yes", b"rename_yes"), Button.inline("No", b"rename_no")]
+    ]
+    await event.reply("Do you want to rename the document?", buttons=buttons)
 
-    # Retrieve user's thumbnail file id from persistence
-    from .persistence import load_thumbnail_data
-    thumb_data = load_thumbnail_data()
-    user_id = str(update.effective_user.id)
-    thumb_id = thumb_data.get(user_id)
+async def callback_handler(event):
+    """Handle the inline button press for renaming decision."""
+    user_id = str(event.sender_id)
+    data = event.data.decode("utf-8")
+    if data == "rename_yes":
+        # Mark that we await a new file name
+        if hasattr(event.client, "_doc_state") and user_id in event.client._doc_state:
+            event.client._doc_state[user_id]["awaiting_new_name"] = True
+        await event.edit("Please send the new file name.")
+    elif data == "rename_no":
+        await event.edit("Processing your document with original file name.")
+        await process_document(event, new_name=None)
+        if hasattr(event.client, "_doc_state"):
+            event.client._doc_state.pop(user_id, None)
 
-    thumb_buffer = None
-    if thumb_id:
-        try:
-            thumb_file_obj = await bot.get_file(thumb_id)
-            thumb_bytes = await thumb_file_obj.download_as_bytearray()
-            thumb_buffer = BytesIO(thumb_bytes)
-            thumb_buffer.seek(0)
-        except Exception as e:
-            print("Failed to download thumbnail:", e)
-            thumb_buffer = None
+def check_new_name(event):
+    """Check if this message should be interpreted as a new file name for a document."""
+    user_id = str(event.sender_id)
+    if hasattr(event.client, "_doc_state") and user_id in event.client._doc_state:
+        if event.message.message and event.message.message.strip():
+            if event.client._doc_state[user_id].get("awaiting_new_name"):
+                return True
+    return False
 
-    # Use update.message if available, else use update.callback_query.message
-    msg = update.message if update.message is not None else update.callback_query.message
-    await msg.reply_document(document=buffer, filename=filename, thumb=thumb_buffer)
+async def handle_new_name(event):
+    user_id = str(event.sender_id)
+    new_name = event.message.message.strip()
+    await event.reply(f"Processing your document with new file name: {new_name}")
+    await process_document(event, new_name=new_name)
+    if hasattr(event.client, "_doc_state"):
+        event.client._doc_state.pop(user_id, None)
+
+async def process_document(event, new_name=None):
+    """
+    Download the document and re-send it with the desired filename and the user's thumbnail.
+    This userbot can download large files because it uses a full client session.
+    """
+    from io import BytesIO
+    user_id = str(event.sender_id)
+    if not hasattr(event.client, "_doc_state") or user_id not in event.client._doc_state:
+        return
+    doc = event.client._doc_state[user_id]["document"]
+    # Create a downloads directory if not exists
+    if not os.path.exists("downloads"):
+        os.makedirs("downloads")
+    download_path = f"downloads/{user_id}_{doc.id}_{doc.file_name}"
+    await event.client.download_media(doc, file=download_path)
+    final_name = new_name if new_name else doc.file_name
+    # Get the thumbnail file path from persistence
+    thumb_path = thumbnail_data.get(user_id)
+    await event.reply("Uploading file, please wait...")
+    # Send the file with the new filename as caption and attach the thumbnail (if available).
+    # Note: The 'thumb' parameter works only if using TDLib; with MTProto it might be ignored.
+    await event.client.send_file(
+        event.chat_id,
+        download_path,
+        caption=final_name,
+        thumb=thumb_path
+    )
+    os.remove(download_path)
