@@ -14,5 +14,5 @@ COPY . .
 # Expose port 8000 for the webhook/health check endpoint.
 EXPOSE 8000
 
-# Run the bot.
-CMD ["python", "bot/main.py"]
+# Run the bot as a module.
+CMD ["python", "-m", "bot.main"]
