@@ -14,19 +14,15 @@ client = TelegramClient(session_name, api_id, api_hash)
 from bot import commands
 
 async def run_bot():
-    await client.start()
-
-    # Register event handlers
-    client.add_event_handler(commands.cmd_start, events.NewMessage(pattern='/start'))
-    client.add_event_handler(commands.cmd_view_thumbnail, events.NewMessage(pattern='/view_thumbnail'))
-    client.add_event_handler(commands.cmd_set_thumbnail, events.NewMessage(pattern='/set_thumbnail'))
-    client.add_event_handler(commands.handle_thumbnail_photo, events.NewMessage(func=commands.check_thumbnail_photo))
-    client.add_event_handler(commands.handle_document, events.NewMessage(func=lambda e: e.message.document is not None))
-    client.add_event_handler(commands.callback_handler, events.CallbackQuery)
-    client.add_event_handler(commands.handle_new_name, events.NewMessage(func=commands.check_new_name))
-    
-    print("Userbot is running...")
-    await client.run_until_disconnected()
+    try:
+        await client.start()
+        print("Userbot is running...")
+        # This call should block until disconnected.
+        await client.run_until_disconnected()
+    except Exception as e:
+        print("Error in run_bot:", e)
+        # If the bot disconnects or errors, wait indefinitely so the health server keeps the container alive.
+        await asyncio.Event().wait()
 
 async def run_health_server():
     app = web.Application()
@@ -40,10 +36,19 @@ async def run_health_server():
     site = web.TCPSite(runner, "0.0.0.0", 8000)
     print("Health server started on port 8000")
     await site.start()
-    # Keep the health server running indefinitely.
+    # Block forever to keep the server running.
     await asyncio.Event().wait()
 
 async def main():
+    # Register event handlers for Telethon
+    client.add_event_handler(commands.cmd_start, events.NewMessage(pattern='/start'))
+    client.add_event_handler(commands.cmd_view_thumbnail, events.NewMessage(pattern='/view_thumbnail'))
+    client.add_event_handler(commands.cmd_set_thumbnail, events.NewMessage(pattern='/set_thumbnail'))
+    client.add_event_handler(commands.handle_thumbnail_photo, events.NewMessage(func=commands.check_thumbnail_photo))
+    client.add_event_handler(commands.handle_document, events.NewMessage(func=lambda e: e.message.document is not None))
+    client.add_event_handler(commands.callback_handler, events.CallbackQuery)
+    client.add_event_handler(commands.handle_new_name, events.NewMessage(func=commands.check_new_name))
+    
     # Run both the bot and the health server concurrently.
     await asyncio.gather(
         run_bot(),
